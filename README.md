@@ -107,7 +107,7 @@ Open **Settings > Secrets and variables > Actions**:
 
 - Open **Actions > Retail SQL promotion > Run workflow > main**. Variable changes alone do not start a run.
 - Review DEV/QA results, then approve PROD through **Review deployments**.
-- Run **[verify.sql](verify.sql)**: order 101 should show **$200 gross / $20 discount / $180 net**; confirm matching release commits and a suspended task.
+- Run **[verify.sql](verify.sql)**: after deploying this 15% change, order 101 should show **$200 gross / $30 discount / $170 net** (10% baseline: $20 discount / $180 net); confirm matching release commits and a suspended task.
 - With PROD disabled, DEV/QA can run, but the workflow reports **`PROD BLOCKED`** rather than full-release success.
 
 ## 5. Make a change
