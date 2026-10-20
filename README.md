@@ -12,7 +12,7 @@ The demo defines `DEV_DB`, `QA_DB`, and `PROD_DB` in one account, each with `BRO
 - Use a dedicated demo account and a private GitHub repository with Actions enabled.
 - Arrange administrator access for setup and a reviewer for production approval.
 - Before publishing workflows, create repository variables `DEPLOYMENTS_ENABLED=false` and `PROD_ENABLED=false` under **Settings > Secrets and variables > Actions > Variables**.
-- If using a different account or repository, update the account/user guards, repository identifiers, OIDC subjects, Git URL, and reviewer ID in the supplied SQL, scripts, workflows, and tests. These values are not automatically configured by this README. Regenerate `setup.sql` with `python3 scripts/build_setup.py` after updating its source.
+- If using a different account or repository, update the account/user guards, repository identifiers, OIDC subjects, Git URL, and reviewer ID in the supplied SQL, scripts, workflows, and tests. These values are not automatically configured by this README. Edit `setup.sql` directly; no generator or local Python setup is required.
 
 ## 2. Run setup in Snowsight
 
@@ -20,7 +20,7 @@ Open **[setup.sql](setup.sql)** and copy it into a Snowsight SQL worksheet using
 
 Run section 1 first to confirm the intended account and existing object names. Continue in order, pausing in section 6 to inspect existing network policies before executing its `ALTER USER` statements. Stop on any error.
 
-This single file includes roles, warehouse, DEV/QA/PROD schemas, DEV sample rows, all four OIDC identities, the GitHub runner network policy **and its user attachments**, and the Snowsight Git integration. No other SQL setup file is needed. OIDC/Git component files and the raw-table/seed SQL supply the generator; do not run them separately.
+This single file includes roles, warehouse, DEV/QA/PROD schemas, DEV sample rows, all four OIDC identities, the GitHub runner network policy **and its user attachments**, and the Snowsight Git integration. No other SQL setup file is needed. `setup.sql` is the authoritative setup file. Do not run the separate OIDC/Git/network reference scripts as additional setup steps.
 
 **Checks are manual, not automatic safeguards.** A user-level network policy overrides the account-level policy ([documentation](https://docs.snowflake.com/en/user-guide/network-policies#network-policy-precedence)); have an administrator review any existing restrictions before attaching this one. The script only attaches the policy to the four automation users. It creates PROD disabled and never enables it; an existing PROD user's disabled state is unchanged. Existing user/integration settings are not reconciled.
 

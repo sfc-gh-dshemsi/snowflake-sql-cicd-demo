@@ -54,8 +54,12 @@ class OfflineContracts(unittest.TestCase):
         text = (ROOT / 'sql/60_process_orders.sql').read_text()
         self.assertLess(text.index('COPY GRANTS'), text.index('RETURNS'))
 
-    def test_setup_generated(self):
-        self.assertEqual((ROOT / 'setup.sql').read_text(), load_script('build_setup').build())
+    def test_setup_requires_no_generator(self):
+        self.assertFalse((ROOT / 'scripts/build_setup.py').exists())
+        for filename in ['setup.sql', 'README.md']:
+            self.assertNotIn('build_setup.py', (ROOT / filename).read_text())
+        for path in (ROOT / '.github/workflows').glob('*.yml'):
+            self.assertNotIn('build_setup.py', path.read_text())
 
     def test_setup_is_self_contained(self):
         text = (ROOT / 'setup.sql').read_text()
@@ -88,16 +92,13 @@ class OfflineContracts(unittest.TestCase):
         self.assertIn('BEFORE running the ALTER USER', text)
         self.assertNotRegex(code, r'\bCREATE\s+OR\s+REPLACE\b')
 
-    def test_setup_embeds_canonical_statements(self):
-        generator = load_script('build_setup')
+    def test_setup_data_matches_deployment(self):
         text = (ROOT / 'setup.sql').read_text()
-        for filename, first_statement in [
-            ('oidc_setup.sql', 'CREATE USER IF NOT EXISTS'),
-            ('git_setup.sql', 'CREATE API INTEGRATION IF NOT EXISTS'),
-        ]:
-            self.assertIn(generator.admin_statements(filename, first_statement), text)
         for filename in ['sql/10_raw_tables.sql', 'sql/20_seed.sql']:
-            self.assertIn(generator.render((ROOT / filename).read_text()), text)
+            expected = (ROOT / filename).read_text()
+            for key, value in {'database': 'DEV_DB', 'bronze': 'BRONZE'}.items():
+                expected = expected.replace(f'<% {key} %>', value)
+            self.assertIn(expected, text)
 
     def test_shell_syntax(self):
         for path in (ROOT / 'scripts').glob('*.sh'):
@@ -178,7 +179,7 @@ class OfflineContracts(unittest.TestCase):
         self.assertEqual(workflows['pr']['jobs']['validation-result']['needs'], ['static', 'sql'])
 
     def test_exact_oidc_subjects_and_disabled_prod(self):
-        text = (ROOT / 'oidc_setup.sql').read_text()
+        text = (ROOT / 'setup.sql').read_text()
         prefix = 'repo:sfc-gh-dshemsi@216220113/snowflake-sql-cicd-demo@1426468222:'
         for suffix in ['pull_request', 'environment:dev', 'environment:qa', 'environment:prod']:
             self.assertIn(prefix + suffix, text)
