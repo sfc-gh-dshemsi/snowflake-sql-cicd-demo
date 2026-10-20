@@ -1,59 +1,74 @@
 # Snowflake SQL CI/CD Demo
 
-A retail example using **GitHub Actions, Snowflake CLI, and OpenID Connect (OIDC)** to promote one code revision through DEV, QA, and manually approved PROD. Business logic is plain SQL; no DCM Projects, schemachange, dbt, or migration framework is used.
+Deploy a retail SQL example with **GitHub Actions, Snowflake CLI, and OIDC**. The same code revision moves through **DEV -> QA -> manual approval -> PROD**. No migration framework is used.
 
-```text
-Feature branch -> Pull request checks -> Merge to main
-                                       -> DEV -> QA -> PROD approval -> PROD
-```
+The demo defines `DEV_DB`, `QA_DB`, and `PROD_DB` in one account, each with `BRONZE`, `SILVER`, and `GOLD` schemas.
 
-The project targets one demo account, `SFSENORTHAMERICA-DSHEMSI_AWS1`, with `DEV_DB`, `QA_DB`, and `PROD_DB`. Each has BRONZE, SILVER, and GOLD layers. PR validation targets separate `DEV_DB.CI_*` schemas.
+**Follow these steps in order:**
+[1. Prepare](#1-prepare) | [2. Run setup](#2-run-setup-in-snowsight) | [3. Connect Git](#3-connect-snowsight-to-github) | [4. Configure Actions](#4-configure-github-actions) | [5. Deploy](#5-deploy-and-verify) | [6. Make a change](#6-make-a-change)
 
-> **Current status:** Offline checks pass; live SQL deployment is not yet verified. Both deployment switches are disabled. GitHub rejected the required-reviewer rule for this private repository; keep PROD disabled until that gate is configured and verified.
+## 1. Prepare
 
-## 1. Prepare the account in Snowsight
+- Use a dedicated demo account and a private GitHub repository with Actions enabled.
+- Arrange administrator access for setup and a reviewer for production approval.
+- Before publishing workflows, create repository variables `DEPLOYMENTS_ENABLED=false` and `PROD_ENABLED=false` under **Settings > Secrets and variables > Actions > Variables**.
+- If using a different account or repository, update the account/user guards, repository identifiers, OIDC subjects, Git URL, and reviewer ID in the supplied SQL, scripts, workflows, and tests. These values are not automatically configured by this README. Regenerate `setup.sql` with `python3 scripts/build_setup.py` after updating its source.
 
-Sign in to the demo account as `DSHEMSI`. Follow [the setup guide](docs/SETUP.md) and run these worksheets manually, in order. Review each section and stop on errors.
+## 2. Run setup in Snowsight
 
-1. **[setup.sql](setup.sql)** — Prepare roles, warehouse, databases, and schemas; seed and display four customers and eleven orders in DEV.
-2. **[oidc_setup.sql](oidc_setup.sql)** — Configure the four Actions service identities. The PROD identity is initially disabled.
-3. **[network_policy_setup.sql](network_policy_setup.sql)** — Inspect existing policies, then review the runner policy before explicitly applying the commented attachment section.
-4. **[git_setup.sql](git_setup.sql)** — Configure the separate Snowsight Git integration and complete interactive GitHub authorization as described in the guide.
+Open each file as a SQL worksheet and run it manually in this order. Follow the role switches in each file, run complete blocks, and stop on errors. Review existing objects before reusing their names.
 
-These files are specific to this account and repository. Review identifiers before adapting the demo elsewhere. Do not run administrative setup through Actions or deploy business SQL from your laptop.
+1. **[setup.sql](setup.sql)** — Prepare roles, warehouse, databases, and schemas; insert sample customers and orders in DEV.
+2. **[oidc_setup.sql](oidc_setup.sql)** — Configure the service identities used by GitHub Actions. Leave the PROD identity disabled until approval is configured.
+3. **[network_policy_setup.sql](network_policy_setup.sql)** — Inspect existing policies, review the runner policy, then explicitly run the commented attachment block. Apply it only to the automation users, not your own login or the account.
+4. **[git_setup.sql](git_setup.sql)** — Configure the integration used to connect Snowsight to GitHub.
 
-## 2. Configure and run GitHub Actions
+**Check:** A fresh setup should display **4 customers and 11 orders**. Full business deployment happens through Actions, not from your laptop.
 
-1. Keep repository variables `DEPLOYMENTS_ENABLED=false` and `PROD_ENABLED=false` during initial publication; only offline checks should run.
-2. Confirm manual setup and review the `dev`, `qa`, and `prod` environments, each restricted to `main`. Configure main branch protection and required PR checks using [SETUP.md](docs/SETUP.md#5-publication-and-release-checklist).
-3. After setup verification, set `DEPLOYMENTS_ENABLED=true` for DEV/QA. Keep PROD disabled until its native required-reviewer gate is verified, then explicitly enable its service identity and set `PROD_ENABLED=true`.
-4. In **Actions > Retail SQL promotion > Run workflow**, select `main`. Inspect DEV and QA results, then approve PROD manually when prompted.
+## 3. Connect Snowsight to GitHub
 
-DEV/QA success alone is not a complete release. For the solo demo, the intended reviewer is `sfc-gh-dshemsi`; customer deployments should use a separate reviewer and prevent self-approval.
+Publish the project to your repository's `main` branch with deployments still disabled. Then, in Snowsight:
 
-## 3. Demonstrate a change
+1. Select `RETAIL_DEV_DEPLOY` in the user-menu role selector.
+2. Open **Projects > Workspaces > From Git repository**.
+3. Enter your repository URL and select `RETAIL_GITHUB_APP`.
+4. Choose **OAuth2**, complete GitHub sign-in, and create the workspace.
 
-Follow the [20-minute runbook](docs/DEMO.md): change the GOLD discount from 10% to 15%, observe an intentional failing PR assertion, update the expected results, then merge and promote. Use [verify.sql](verify.sql) to inspect results after deployment.
+This Git connection is separate from the OIDC authentication used by Actions. See the [workspace setup documentation](https://docs.snowflake.com/en/user-guide/ui-snowsight/workspaces-git).
 
-The SQL includes customer/order tables, cleaned views, a discount UDF, an order-processing procedure, a sales summary, and a task deliberately left suspended. Tests cover accepted/rejected orders, repeat processing, raw-data preservation, and task state. [RESULTS.md](docs/RESULTS.md) distinguishes observed checks from unrun live tests.
+## 4. Configure GitHub Actions
 
-## Repository layout
+1. Under **Settings > Environments**, create `dev`, `qa`, and `prod`. Restrict each to the `main` branch.
+2. For `prod`, configure a required reviewer and disable administrator bypass. Match the reviewer ID in `scripts/check_environment.py`. Use a separate reviewer for team deployments.
+3. Protect `main` with required pull requests and the `validation-result` check; confirm the check name from a PR run. This check intentionally fails when live SQL validation is skipped.
+4. After verifying manual setup, grants, and network configuration, set `DEPLOYMENTS_ENABLED=true`.
+5. Only after verifying the native PROD approval gate, enable `RETAIL_PROD_SVC` in Snowsight and set `PROD_ENABLED=true`.
 
-- `sql/` — Shared business definitions, fixtures, and deployment history.
-- `tests/` — SQL assertions and offline contract tests.
-- `scripts/` — Setup generation, deployment order, and release safeguards.
-- `.github/workflows/` — PR validation and sequential environment promotion.
-- `docs/` — Detailed setup, demo runbook, and verification record.
+**Do not enable PROD if required-reviewer protection is unavailable.** A manual workflow start does not replace production approval.
 
-## Run offline checks
+## 5. Deploy and verify
 
-From the repository root:
+1. In GitHub, open **Actions > Retail SQL promotion > Run workflow** and select `main`.
+2. Inspect the DEV deployment and tests, followed by QA.
+3. Have the designated reviewer approve PROD through **Review deployments**.
+4. Run **[verify.sql](verify.sql)** in Snowsight using the matching environment role/database.
 
-```bash
-python3 -m pip install -r requirements-dev.txt
-python3 -m unittest discover -s tests -p 'test_*.py' -v
-```
+**Expected result:** Order 101 has **$200 gross, $20 discount, and $180 net**. Confirm the same release commit across DEV, QA, and PROD. The task should remain suspended.
 
-These checks do not connect to Snowflake or establish that SQL compiles. Keep credentials and customer data out of source control and workflow logs.
+## 6. Make a change
 
-Reference: [Snowflake CLI GitHub Action and OIDC authentication](https://docs.snowflake.com/en/developer-guide/snowflake-cli/cicd/github-action).
+1. Create a feature branch and update the business SQL in [`sql/`](sql/).
+2. Update the matching assertions in [`tests/assertions.sql`](tests/assertions.sql).
+3. Push the branch and open a pull request to `main`.
+4. Review the changes and passing checks, then merge.
+5. Follow the automatic DEV -> QA promotion, approve PROD, and verify the new results.
+
+**Example:** Change the GOLD discount from 10% to 15%. Update expected discounts **20 -> 30** and **10 -> 15**, net amounts **180 -> 170** and **90 -> 85**, and total net sales **519.99 -> 504.99**. Order 101 should then have **$170 net**.
+
+## Documentation
+
+- [Snowflake CLI GitHub Action and OIDC](https://docs.snowflake.com/en/developer-guide/snowflake-cli/cicd/github-action)
+- [Connect Snowsight Workspaces to Git](https://docs.snowflake.com/en/user-guide/ui-snowsight/workspaces-git)
+- [GitHub deployment environments and approval rules](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)
+
+Sample results above are expectations. Passing offline checks does not verify live SQL execution; complete the deployment steps before presenting the demo as tested end to end.
