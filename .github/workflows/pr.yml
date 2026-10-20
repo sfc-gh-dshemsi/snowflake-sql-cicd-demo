@@ -1,0 +1,56 @@
+name: Retail PR validation
+'on':
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  static:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - run: python3 -m pip install -r requirements-dev.txt
+      - run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+  sql:
+    needs: static
+    if: vars.DEPLOYMENTS_ENABLED == 'true' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    concurrency:
+      group: retail-pr-schemas
+      cancel-in-progress: false
+    # No environment: GitHub subject ends in :pull_request, not :environment:...
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      SNOWFLAKE_ACCOUNT: SFSENORTHAMERICA-DSHEMSI_AWS1
+      DEPLOY_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: snowflakedb/snowflake-actions@77786d11f0290def0872d746273843c0fe14024d # v3.0.0
+        with:
+          cli-version: '3.17.1'
+          use-oidc: true
+      - run: bash scripts/deploy.sh pr
+  validation-result:
+    needs: [static, sql]
+    if: always()
+    runs-on: ubuntu-24.04
+    env:
+      STATIC_RESULT: ${{ needs.static.result }}
+      SQL_RESULT: ${{ needs.sql.result }}
+    steps:
+      - name: Require live SQL for a merge-ready result
+        run: |
+          test "$STATIC_RESULT" = success
+          if [ "$SQL_RESULT" != success ]; then
+            echo 'Not merge-ready: SQL validation failed or was skipped. Fork PRs are static-only.'
+            exit 1
+          fi

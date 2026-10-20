@@ -1,0 +1,21 @@
+CREATE OR REPLACE VIEW <% database %>.<% silver %>.V_CUSTOMERS_CLEAN COPY GRANTS AS
+SELECT CUSTOMER_ID, TRIM(CUSTOMER_NAME) AS CUSTOMER_NAME,
+       LOWER(TRIM(EMAIL)) AS EMAIL, UPPER(TRIM(CUSTOMER_TIER)) AS CUSTOMER_TIER
+FROM <% database %>.<% bronze %>.CUSTOMERS;
+
+-- Keep invalid orders visible rather than silently filtering them out.
+CREATE OR REPLACE VIEW <% database %>.<% silver %>.V_ORDERS_CLEAN COPY GRANTS AS
+SELECT orders.ORDER_ID, orders.CUSTOMER_ID, orders.ORDER_DATE, orders.ORDER_AMOUNT,
+       UPPER(TRIM(orders.ORDER_STATUS)) AS ORDER_STATUS, customers.CUSTOMER_TIER,
+       CASE
+         WHEN customers.CUSTOMER_ID IS NULL THEN 'UNKNOWN_CUSTOMER'
+         WHEN orders.ORDER_DATE IS NULL THEN 'MISSING_DATE'
+         WHEN orders.ORDER_AMOUNT IS NULL OR orders.ORDER_AMOUNT <= 0 THEN 'INVALID_AMOUNT'
+         WHEN UPPER(TRIM(orders.ORDER_STATUS)) = 'CANCELLED' THEN 'CANCELLED'
+         WHEN orders.ORDER_STATUS IS NULL
+           OR UPPER(TRIM(orders.ORDER_STATUS)) <> 'COMPLETED' THEN 'INVALID_STATUS'
+         ELSE NULL
+       END AS REJECTION_REASON
+FROM <% database %>.<% bronze %>.ORDERS AS orders
+LEFT JOIN <% database %>.<% silver %>.V_CUSTOMERS_CLEAN AS customers
+  ON orders.CUSTOMER_ID = customers.CUSTOMER_ID;

@@ -1,0 +1,65 @@
+name: Retail SQL promotion
+run-name: Promote ${{ github.sha }}
+'on':
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: retail-release
+  cancel-in-progress: false
+jobs:
+  static:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - run: python3 -m pip install -r requirements-dev.txt
+      - run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+  dev:
+    needs: static
+    if: github.ref == 'refs/heads/main' && vars.DEPLOYMENTS_ENABLED == 'true'
+    uses: ./.github/workflows/deploy.yml
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+      deployments: read
+    with:
+      target: dev
+      commit_sha: ${{ github.sha }}
+  qa:
+    needs: dev
+    uses: ./.github/workflows/deploy.yml
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+      deployments: read
+    with:
+      target: qa
+      commit_sha: ${{ github.sha }}
+  prod:
+    needs: qa
+    if: vars.PROD_ENABLED == 'true'
+    uses: ./.github/workflows/deploy.yml
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+      deployments: read
+    with:
+      target: prod
+      commit_sha: ${{ github.sha }}
+  production-disabled:
+    needs: qa
+    if: vars.PROD_ENABLED != 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          echo 'PROD BLOCKED: required-reviewer support must be configured and verified.'
+          echo 'DEV/QA success is NOT an end-to-end production release.'
+          exit 1

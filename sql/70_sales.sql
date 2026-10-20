@@ -1,0 +1,10 @@
+CREATE OR REPLACE VIEW <% database %>.<% gold %>.V_CUSTOMER_SALES COPY GRANTS AS
+SELECT customers.CUSTOMER_ID, customers.CUSTOMER_NAME, customers.CUSTOMER_TIER,
+       COUNT(orders.ORDER_ID) AS COMPLETED_ORDERS,
+       COALESCE(SUM(orders.ORDER_AMOUNT), 0) AS GROSS_SALES,
+       COALESCE(SUM(orders.DISCOUNT_AMOUNT), 0) AS TOTAL_DISCOUNT,
+       COALESCE(SUM(orders.NET_AMOUNT), 0) AS NET_SALES
+FROM <% database %>.<% silver %>.V_CUSTOMERS_CLEAN AS customers
+LEFT JOIN <% database %>.<% silver %>.PROCESSED_ORDERS AS orders
+  ON customers.CUSTOMER_ID = orders.CUSTOMER_ID AND orders.VALIDATION_STATUS = 'ACCEPTED'
+GROUP BY customers.CUSTOMER_ID, customers.CUSTOMER_NAME, customers.CUSTOMER_TIER;

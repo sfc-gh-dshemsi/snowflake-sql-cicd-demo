@@ -1,0 +1,51 @@
+name: Deploy one environment
+'on':
+  workflow_call:
+    inputs:
+      target:
+        required: true
+        type: string
+      commit_sha:
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main' && contains(fromJSON('["dev","qa","prod"]'), inputs.target)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: ${{ inputs.target }}
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+      deployments: read
+    env:
+      SNOWFLAKE_ACCOUNT: SFSENORTHAMERICA-DSHEMSI_AWS1
+      DEPLOY_SHA: ${{ inputs.commit_sha }}
+      DEPLOY_TARGET: ${{ inputs.target }}
+      PROD_ENABLED: ${{ vars.PROD_ENABLED }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+      - name: Refuse stale releases
+        run: bash scripts/check_current_release.sh
+      - name: Verify environment protections before requesting Snowflake token
+        run: python3 scripts/check_environment.py "$DEPLOY_TARGET"
+      - uses: snowflakedb/snowflake-actions@77786d11f0290def0872d746273843c0fe14024d # v3.0.0
+        with:
+          cli-version: '3.17.1'
+          use-oidc: true
+      - name: Deploy twice and run SQL assertions
+        run: bash scripts/deploy.sh "$DEPLOY_TARGET"
+      - name: Record outcome
+        if: always()
+        env:
+          RESULT: ${{ job.status }}
+        run: |
+          printf '## %s deployment\nCommit: `%s`\n\nResult: %s\n' "$DEPLOY_TARGET" "$DEPLOY_SHA" "$RESULT" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Inspect SQL step for query errors and individual PASS assertions.\n' >> "$GITHUB_STEP_SUMMARY"
