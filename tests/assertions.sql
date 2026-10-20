@@ -1,5 +1,5 @@
 -- Independent constants, not derived by calling the implementation under test.
--- Feature demo 15%: 20->30, 10->15, 180->170, 90->85, 519.99->504.99.
+-- 15% GOLD discount: 30/15 discounts, 170/85 net amounts, 504.99 total net sales.
 CALL <% database %>.<% silver %>.PROCESS_ORDERS();
 EXECUTE IMMEDIATE $$
 DECLARE
@@ -7,8 +7,8 @@ DECLARE
     test_failed EXCEPTION (-20010, 'Retail SQL assertions failed; inspect fixture and business definitions');
 BEGIN
     SELECT COUNT(*) INTO :failures FROM (
-      SELECT <% database %>.<% silver %>.CALCULATE_DISCOUNT(200, ' gold ') AS ACTUAL, 20.00 AS EXPECTED
-      UNION ALL SELECT <% database %>.<% silver %>.CALCULATE_DISCOUNT(100, 'GOLD'), 10.00
+      SELECT <% database %>.<% silver %>.CALCULATE_DISCOUNT(200, ' gold ') AS ACTUAL, 30.00 AS EXPECTED
+      UNION ALL SELECT <% database %>.<% silver %>.CALCULATE_DISCOUNT(100, 'GOLD'), 15.00
       UNION ALL SELECT <% database %>.<% silver %>.CALCULATE_DISCOUNT(99.99, 'GOLD'), 0.00
       UNION ALL SELECT <% database %>.<% silver %>.CALCULATE_DISCOUNT(200, 'STANDARD'), 0.00
       UNION ALL SELECT <% database %>.<% silver %>.CALCULATE_DISCOUNT(NULL, 'GOLD'), 0.00
@@ -19,10 +19,10 @@ BEGIN
 
     SELECT COUNT(*) INTO :failures FROM (
       SELECT * FROM VALUES
-        (101, 'ACCEPTED', NULL,               180.00),
+        (101, 'ACCEPTED', NULL,               170.00),
         (102, 'ACCEPTED', NULL,                99.99),
         (103, 'ACCEPTED', NULL,               150.00),
-        (104, 'ACCEPTED', NULL,                90.00),
+        (104, 'ACCEPTED', NULL,                85.00),
         (105, 'REJECTED', 'CANCELLED',          NULL),
         (106, 'REJECTED', 'INVALID_AMOUNT',     NULL),
         (107, 'REJECTED', 'UNKNOWN_CUSTOMER',   NULL),
@@ -54,7 +54,7 @@ BEGIN
     SELECT COUNT(*) INTO :failures FROM (
       SELECT SUM(NET_SALES) AS TOTAL, SUM(COMPLETED_ORDERS) AS ORDER_COUNT
       FROM <% database %>.<% gold %>.V_CUSTOMER_SALES
-    ) WHERE TOTAL = 519.99 AND ORDER_COUNT = 4;
+    ) WHERE TOTAL = 504.99 AND ORDER_COUNT = 4;
     IF (failures <> 1) THEN RAISE test_failed; END IF;
 
     SELECT COUNT(*) INTO :failures FROM (
