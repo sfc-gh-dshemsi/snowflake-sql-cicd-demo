@@ -27,9 +27,16 @@ jobs:
       contents: read
       id-token: write
     env:
-      SNOWFLAKE_ACCOUNT: SFSENORTHAMERICA-DSHEMSI_AWS1
+      SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
       DEPLOY_SHA: ${{ github.sha }}
     steps:
+      - name: Check account configuration
+        shell: bash
+        run: |
+          if [[ -z "${SNOWFLAKE_ACCOUNT//[[:space:]]/}" ]]; then
+            echo 'Missing repository secret: SNOWFLAKE_ACCOUNT' >&2
+            exit 1
+          fi
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ github.sha }}

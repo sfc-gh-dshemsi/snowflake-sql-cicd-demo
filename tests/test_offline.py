@@ -178,6 +178,28 @@ class OfflineContracts(unittest.TestCase):
         self.assertIn('head.repo.full_name == github.repository', workflows['pr']['jobs']['sql']['if'])
         self.assertEqual(workflows['pr']['jobs']['validation-result']['needs'], ['static', 'sql'])
 
+    def test_account_secret_wiring_and_missing_value(self):
+        workflows = {path.stem: yaml.safe_load(path.read_text())
+                     for path in (ROOT / '.github/workflows').glob('*.yml')}
+        secret = '${{ secrets.SNOWFLAKE_ACCOUNT }}'
+        self.assertTrue(workflows['deploy']['on']['workflow_call']['secrets']['SNOWFLAKE_ACCOUNT']['required'])
+        for target in ['dev', 'qa', 'prod']:
+            self.assertEqual(workflows['promote']['jobs'][target]['secrets'],
+                             {'SNOWFLAKE_ACCOUNT': secret})
+        for workflow, job_name in [('pr', 'sql'), ('deploy', 'deploy')]:
+            job = workflows[workflow]['jobs'][job_name]
+            self.assertEqual(job['env']['SNOWFLAKE_ACCOUNT'], secret)
+            check = job['steps'][0]
+            self.assertEqual(check['name'], 'Check account configuration')
+            for value, expected in [('', 1), ('  \t', 1), ('EXAMPLE-ACCOUNT', 0)]:
+                result = subprocess.run(['bash', '-c', check['run']],
+                                        env=dict(os.environ, SNOWFLAKE_ACCOUNT=value),
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, expected)
+                self.assertNotIn('EXAMPLE-ACCOUNT', result.stdout + result.stderr)
+        for path in (ROOT / '.github/workflows').glob('*.yml'):
+            self.assertNotIn('SFSENORTHAMERICA-DSHEMSI_AWS1', path.read_text())
+
     def test_exact_oidc_subjects_and_disabled_prod(self):
         text = (ROOT / 'setup.sql').read_text()
         prefix = 'repo:sfc-gh-dshemsi@216220113/snowflake-sql-cicd-demo@1426468222:'

@@ -4,8 +4,80 @@ Deploy a retail SQL example with **GitHub Actions, Snowflake CLI, and OIDC**. Th
 
 The demo defines `DEV_DB`, `QA_DB`, and `PROD_DB` in one account, each with `BRONZE`, `SILVER`, and `GOLD` schemas.
 
+**Overview:** [CI/CD flow](#how-cicd-works-in-this-demo) | [Demo architecture](#demo-architecture)
+
 **Follow these steps in order:**
 [1. Prepare](#1-prepare) | [2. Run setup](#2-run-setup-in-snowsight) | [3. Connect Git](#3-connect-snowsight-to-github) | [4. Configure Actions](#4-configure-github-actions) | [5. Deploy](#5-deploy-and-verify) | [6. Make a change](#6-make-a-change)
+
+## How CI/CD works in this demo
+
+**Continuous integration (CI)** checks proposed SQL changes before merging. **Continuous delivery (CD)** deploys the merged code through DEV and QA, then waits for production approval. GitHub Actions orchestrates the work; Snowflake CLI submits the SQL and assertions.
+
+```mermaid
+flowchart TD
+    EDIT["Feature branch: edit SQL and tests"] --> PR["Open or update a PR to main"]
+    subgraph CI["CI - validate before merging"]
+        PR --> STATIC["Offline code checks"]
+        STATIC --> SQLTEST["Live SQL deployment and assertions<br/>DEV_DB.CI_BRONZE / CI_SILVER / CI_GOLD"]
+        SQLTEST --> RESULT{"validation-result passes?"}
+    end
+    RESULT -->|No| FIX["Fix the code or tests and push again"]
+    FIX --> PR
+    RESULT -->|Yes, then review and merge| MAIN["main: release commit"]
+    subgraph CD["CD - promote the same main commit"]
+        MAIN --> RELEASECHECK["Offline checks and release guards"]
+        RELEASECHECK --> DEV["DEV: deploy and test"]
+        DEV -->|Pass| QA["QA: deploy and test"]
+        QA -->|Pass| APPROVAL{"Required reviewer<br/>approves PROD?"}
+        APPROVAL -->|Approved| PROD["PROD: deploy and test"]
+    end
+```
+
+DEV, QA, and PROD are **environments, not Git branches**. PR validation uses separate CI schemas; it does not deploy to the regular DEV layers. A failed deployment stops later stages. Require `validation-result` in branch protection to enforce the PR check before merging.
+
+The diagram shows the **enabled path**, not proof of a completed deployment. Live PR tests and DEV/QA require `DEPLOYMENTS_ENABLED=true`; PROD also requires `PROD_ENABLED=true`, an enabled service user, and a configured reviewer gate. Fork and Dependabot PRs skip live SQL and do not receive a passing `validation-result`.
+
+## Demo architecture
+
+```mermaid
+flowchart TB
+    AUTHOR["Developer<br/>Snowsight Git workspace or local editor"] -->|Commit and push| REPO["GitHub repository<br/>SQL files, assertions, workflows"]
+    ADMIN["Administrator<br/>Run setup.sql manually in Snowsight"]
+
+    subgraph GH["GitHub Actions"]
+        CONFIG["Repository configuration<br/>Secret: SNOWFLAKE_ACCOUNT<br/>Variables: deployment switches"]
+        RUNNER["Hosted runner<br/>Snowflake CLI + deploy.sh"]
+        TOKEN["GitHub OIDC<br/>Short-lived identity token"]
+        CONFIG -.-> RUNNER
+        TOKEN --> RUNNER
+    end
+    REPO -->|PR validation or main promotion| RUNNER
+
+    subgraph SF["One Snowflake demo account"]
+        ACCESS["Connection controls<br/>RETAIL_GITHUB_RUNNERS network policy<br/>OIDC service users and deployment roles"]
+        WH["Shared compute<br/>RETAIL_CICD_WH"]
+        subgraph DEVDB["DEV_DB"]
+            PRLAYERS["CI_BRONZE / CI_SILVER / CI_GOLD<br/>RETAIL_PR_SVC / RETAIL_PR_DEPLOY"]
+            DEVLAYERS["BRONZE / SILVER / GOLD<br/>RETAIL_DEV_SVC / RETAIL_DEV_DEPLOY"]
+        end
+        QALAYERS["QA_DB<br/>BRONZE / SILVER / GOLD<br/>RETAIL_QA_SVC / RETAIL_QA_DEPLOY"]
+        PRODLAYERS["PROD_DB<br/>BRONZE / SILVER / GOLD<br/>RETAIL_PROD_SVC / RETAIL_PROD_DEPLOY"]
+        ACCESS -->|PR| PRLAYERS
+        ACCESS -->|DEV| DEVLAYERS
+        ACCESS -->|QA| QALAYERS
+        ACCESS -->|PROD - after approval| PRODLAYERS
+        WH -.-> PRLAYERS
+        WH -.-> DEVLAYERS
+        WH -.-> QALAYERS
+        WH -.-> PRODLAYERS
+    end
+    RUNNER -->|OIDC-authenticated SQL and assertions| ACCESS
+    ADMIN -.->|Infrastructure, identities, policy, Git integration and DEV seed rows| SF
+```
+
+Solid arrows show code submission and target routing; dotted arrows show configuration, manual provisioning, or compute usage. **Promotion moves code, not data between databases.** Each target runs the same ordered SQL files with its own database, schemas, and role. The deployment tests reruns and data preservation, and leaves the demo task suspended.
+
+Snowsight's interactive Git connection is separate from Actions authentication. As the [Snowflake CLI documentation](https://docs.snowflake.com/en/developer-guide/snowflake-cli/cicd/github-action) states, with OIDC, "GitHub issues a short-lived OpenID Connect token that Snowflake validates directly."
 
 ## 1. Prepare
 
@@ -60,6 +132,19 @@ For a team deployment, select **Prevent self-review** and use a different person
 **If Required reviewers is missing or cannot be saved, stop here for PROD.** Check [GitHub's availability requirements](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments). Creating an environment or clicking Run workflow does not establish an approval gate. Keep `PROD_ENABLED=false` until the gate is available and verified.
 
 ### C. Check the deployment switches
+
+**First, add the account identifier as a repository secret:**
+
+1. Open **Settings > Secrets and variables > Actions > Secrets**.
+2. Click **New repository secret**.
+3. Name it **`SNOWFLAKE_ACCOUNT`** and enter the identifier for the demo account where you ran `setup.sql`, in `ORGANIZATION-ACCOUNT` form. Do not enter a URL or your Snowhouse account.
+4. Click **Add secret**. Use a repository secret, not an environment secret, so the PR workflow can use it too. Do not create same-name environment secrets.
+
+The PR workflow reads this secret directly; the promotion workflow passes it explicitly to DEV, QA, and PROD. Missing or blank values fail before requesting an OIDC token. The account identifier is configuration, not an authentication credential; a secret is used here to keep it out of workflow YAML. The [official OIDC example](https://docs.snowflake.com/en/developer-guide/snowflake-cli/cicd/github-action) uses `${{ secrets.SNOWFLAKE_ACCOUNT }}`. No password or private-key secret is needed for this OIDC configuration.
+
+The account must still match the deliberate safety checks in `scripts/deploy.sh` and `sql/00_guard.sql`. Changing the secret alone does not retarget the entire demo or remove account identifiers already present elsewhere in the repository/history.
+
+**Then configure the deployment switches:**
 
 Open **Settings > Secrets and variables > Actions > Variables**. These are **repository variables**, not secrets or environment variables. Add them with **New repository variable**, or edit the existing values:
 

@@ -23,6 +23,8 @@ jobs:
     needs: static
     if: github.ref == 'refs/heads/main' && vars.DEPLOYMENTS_ENABLED == 'true'
     uses: ./.github/workflows/deploy.yml
+    secrets:
+      SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
     permissions:
       contents: read
       id-token: write
@@ -34,6 +36,8 @@ jobs:
   qa:
     needs: dev
     uses: ./.github/workflows/deploy.yml
+    secrets:
+      SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
     permissions:
       contents: read
       id-token: write
@@ -46,6 +50,8 @@ jobs:
     needs: qa
     if: vars.PROD_ENABLED == 'true'
     uses: ./.github/workflows/deploy.yml
+    secrets:
+      SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
     permissions:
       contents: read
       id-token: write
