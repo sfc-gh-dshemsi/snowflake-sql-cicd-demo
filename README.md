@@ -16,14 +16,15 @@ The demo defines `DEV_DB`, `QA_DB`, and `PROD_DB` in one account, each with `BRO
 
 ## 2. Run setup in Snowsight
 
-Open each file as a SQL worksheet and run it manually in this order. Follow the role switches in each file, run complete blocks, and stop on errors. Review existing objects before reusing their names.
+Open **[setup.sql](setup.sql)** and copy it into a Snowsight SQL worksheet using a login with ACCOUNTADMIN access. The file uses plain SQL in nine numbered sections—no scripting blocks.
 
-1. **[setup.sql](setup.sql)** — Prepare roles, warehouse, databases, and schemas; insert sample customers and orders in DEV.
-2. **[oidc_setup.sql](oidc_setup.sql)** — Configure the service identities used by GitHub Actions. Leave the PROD identity disabled until approval is configured.
-3. **[network_policy_setup.sql](network_policy_setup.sql)** — Inspect existing policies, review the runner policy, then explicitly run the commented attachment block. Apply it only to the automation users, not your own login or the account.
-4. **[git_setup.sql](git_setup.sql)** — Configure the integration used to connect Snowsight to GitHub.
+Run section 1 first to confirm the intended account and existing object names. Continue in order, pausing in section 6 to inspect existing network policies before executing its `ALTER USER` statements. Stop on any error.
 
-**Check:** A fresh setup should display **4 customers and 11 orders**. Full business deployment happens through Actions, not from your laptop.
+This single file includes roles, warehouse, DEV/QA/PROD schemas, DEV sample rows, all four OIDC identities, the GitHub runner network policy **and its user attachments**, and the Snowsight Git integration. No other SQL setup file is needed. OIDC/Git component files and the raw-table/seed SQL supply the generator; do not run them separately.
+
+**Checks are manual, not automatic safeguards.** A user-level network policy overrides the account-level policy ([documentation](https://docs.snowflake.com/en/user-guide/network-policies#network-policy-precedence)); have an administrator review any existing restrictions before attaching this one. The script only attaches the policy to the four automation users. It creates PROD disabled and never enables it; an existing PROD user's disabled state is unchanged. Existing user/integration settings are not reconciled.
+
+**Check:** Inspect every statement result and verify **4 customers / 11 orders** on a fresh setup. The final status message alone does not prove success. Full business deployment still happens through Actions. Git sign-in and GitHub approval settings are completed in steps 3 and 4.
 
 ## 3. Connect Snowsight to GitHub
 
@@ -38,13 +39,42 @@ This Git connection is separate from the OIDC authentication used by Actions. Se
 
 ## 4. Configure GitHub Actions
 
-1. Under **Settings > Environments**, create `dev`, `qa`, and `prod`. Restrict each to the `main` branch.
-2. For `prod`, configure a required reviewer and disable administrator bypass. Match the reviewer ID in `scripts/check_environment.py`. Use a separate reviewer for team deployments.
-3. Protect `main` with required pull requests and the `validation-result` check; confirm the check name from a PR run. This check intentionally fails when live SQL validation is skipped.
-4. After verifying manual setup, grants, and network configuration, set `DEPLOYMENTS_ENABLED=true`.
-5. Only after verifying the native PROD approval gate, enable `RETAIL_PROD_SVC` in Snowsight and set `PROD_ENABLED=true`.
+Complete these settings **in your GitHub repository**, using repository owner/admin access. GitHub environments control where a workflow may run; they are not the DEV/QA/PROD databases.
 
-**Do not enable PROD if required-reviewer protection is unavailable.** A manual workflow start does not replace production approval.
+### A. Create the three environments
+
+1. Open **Settings > Environments > New environment**. Enter `dev` and click **Configure environment**. If it already exists, open it instead.
+2. Under **Deployment branches and tags**, choose **Selected branches and tags**.
+3. Click **Add deployment branch or tag rule**, select **Branch**, enter `main`, and save. Keep exactly this one rule; do not add a tag rule or wildcard.
+4. Repeat for `qa` and `prod`. Leave required reviewers off for DEV and QA so those stages can run automatically.
+
+### B. Require approval for PROD
+
+1. Open **Settings > Environments > prod**.
+2. Under **Deployment protection rules**, select **Required reviewers** and add the person who will approve production releases.
+3. Deselect **Allow administrators to bypass configured protection rules**, then click **Save protection rules**.
+4. Use the same person's numeric GitHub user ID in both reviewer checks in [`scripts/check_environment.py`](scripts/check_environment.py), and update the matching offline test if changing the reviewer. This script checks both the configured reviewer and who actually approved the run.
+
+For a team deployment, select **Prevent self-review** and use a different person to approve. For a solo demonstration, leave self-review allowed so the person starting the run can approve it.
+
+**If Required reviewers is missing or cannot be saved, stop here for PROD.** Check [GitHub's availability requirements](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments). Creating an environment or clicking Run workflow does not establish an approval gate. Keep `PROD_ENABLED=false` until the gate is available and verified.
+
+### C. Check the deployment switches
+
+Open **Settings > Secrets and variables > Actions > Variables**. These are **repository variables**, not secrets or environment variables. Add them with **New repository variable**, or edit the existing values:
+
+- **`DEPLOYMENTS_ENABLED`**: start with `false`. Set to `true` only after verifying manual setup, grants, and network configuration. This enables live PR SQL checks and DEV/QA promotion on subsequent runs.
+- **`PROD_ENABLED`**: keep `false` until section B is complete and verified. Then explicitly enable the initially disabled `RETAIL_PROD_SVC` identity in Snowsight and set this variable to `true`.
+
+Use lowercase `true` and `false`. Changing a variable does not start a workflow; start a new run in step 5. With DEV/QA enabled but PROD disabled, the workflow intentionally reports `PROD BLOCKED` after QA rather than claiming a complete release.
+
+### D. Protect the main branch
+
+In **Settings > Branches**, add or edit a branch protection rule for `main`. Require a pull request and passing status checks before merging; keep force pushes and branch deletion disabled.
+
+Select **`validation-result`** as a required status check. If it is not listed yet, open a test PR and let **Retail PR validation** run, then return to select the check. Its exact name is visible in the PR's **Checks** tab. It intentionally fails if live SQL tests fail or are skipped; enable live validation and get a passing result before merging.
+
+**Ready for step 5:** All three environments have a single `main` branch rule, PROD has a saved reviewer gate with bypass disabled, both enable switches are `true`, and the production identity has been explicitly enabled. Do not change these settings just to bypass a failed check.
 
 ## 5. Deploy and verify
 

@@ -57,6 +57,48 @@ class OfflineContracts(unittest.TestCase):
     def test_setup_generated(self):
         self.assertEqual((ROOT / 'setup.sql').read_text(), load_script('build_setup').build())
 
+    def test_setup_is_self_contained(self):
+        text = (ROOT / 'setup.sql').read_text()
+        code = re.sub(r'--[^\n]*', '', text)
+        self.assertNotRegex(code, r'\b(EXECUTE IMMEDIATE|DECLARE|BEGIN|RAISE)\b')
+        self.assertNotIn('$$', code)
+        self.assertEqual(re.findall(r'^-- (\d+)\.', text, re.M),
+                         [str(number) for number in range(1, 10)])
+        self.assertIn('SET USERNAME = (SELECT CURRENT_USER());', code)
+        self.assertIn('TO USER IDENTIFIER($USERNAME);', code)
+        self.assertNotIn('<%', code)
+        self.assertNotIn('/*', code)
+        self.assertNotIn('EXECUTE IMMEDIATE FROM', code)
+        for environment in ['PR', 'DEV', 'QA', 'PROD']:
+            self.assertIn(f'CREATE USER IF NOT EXISTS RETAIL_{environment}_SVC', code)
+            self.assertRegex(code, rf'ALTER USER RETAIL_{environment}_SVC\s+SET NETWORK_POLICY = RETAIL_GITHUB_RUNNERS;')
+        self.assertIn('CREATE API INTEGRATION IF NOT EXISTS RETAIL_GITHUB_APP', code)
+        self.assertIn('BLOCKED_NETWORK_RULE_LIST = ()', code)
+        self.assertNotIn('ALTER ACCOUNT', code)
+        self.assertNotIn('ALTER USER DSHEMSI', code)
+        self.assertNotIn('DISABLED = FALSE', code)
+        self.assertIn('TYPE = SERVICE DISABLED = TRUE', code)
+        self.assertNotRegex(code, r'\b(DROP|TRUNCATE)\b')
+        self.assertLess(code.index('SHOW PARAMETERS LIKE \'NETWORK_POLICY\' IN ACCOUNT'),
+                        code.index('CREATE ROLE'))
+        self.assertLess(code.index('DESC NETWORK POLICY RETAIL_GITHUB_RUNNERS'),
+                        code.index('ALTER USER RETAIL_PR_SVC'))
+        self.assertGreater(code.index("SELECT 'Setup script finished"), code.index('CREATE API INTEGRATION'))
+        self.assertIn('they do NOT automatically stop writes', text)
+        self.assertIn('BEFORE running the ALTER USER', text)
+        self.assertNotRegex(code, r'\bCREATE\s+OR\s+REPLACE\b')
+
+    def test_setup_embeds_canonical_statements(self):
+        generator = load_script('build_setup')
+        text = (ROOT / 'setup.sql').read_text()
+        for filename, first_statement in [
+            ('oidc_setup.sql', 'CREATE USER IF NOT EXISTS'),
+            ('git_setup.sql', 'CREATE API INTEGRATION IF NOT EXISTS'),
+        ]:
+            self.assertIn(generator.admin_statements(filename, first_statement), text)
+        for filename in ['sql/10_raw_tables.sql', 'sql/20_seed.sql']:
+            self.assertIn(generator.render((ROOT / filename).read_text()), text)
+
     def test_shell_syntax(self):
         for path in (ROOT / 'scripts').glob('*.sh'):
             subprocess.run(['bash', '-n', str(path)], check=True)
